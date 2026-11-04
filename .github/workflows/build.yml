@@ -1,0 +1,71 @@
+name: Build ImmortalWrt R3P Micron NAND
+on:
+  workflow_dispatch: # 手动触发（推荐，自己点按钮编译）
+  # push: # 如果你想提交自动编译，可以取消注释
+  #   branches: [ openwrt-25.12 ]
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
+  REPO_BRANCH: openwrt-25.12
+  CONFIG_FILE: .config
+  PATCH_FILE: patches/mt7621_xiaomi_r3p_micron_nand.patch
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: 安装依赖
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev autoconf git wget curl rsync unzip python3 python3-pip time
+          sudo apt clean
+
+      - name: 拉取 ImmortalWrt 源码
+        run: |
+          git clone $REPO_URL -b $REPO_BRANCH openwrt
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 应用镁光NAND DTS补丁
+        run: |
+          cd openwrt
+          patch -p1 < ../${PATCH_FILE}
+          echo "✅ 补丁注入完成，镁光BCH ECC已设置"
+
+      - name: 写入.config配置
+        run: |
+          cat > openwrt/.config <<'EOF'
+CONFIG_TARGET_ramips=y
+CONFIG_TARGET_ramips_mt7621=y
+CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mi-router-3-pro=y
+CONFIG_PACKAGE_nand-utils=y
+CONFIG_KERNEL_MTD_NAND=y
+CONFIG_KERNEL_MTD_NAND_MT7621=y
+CONFIG_KERNEL_MTD_NAND_BCH=y
+# 基础包，按需增减
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-i18n-zh-cn=y
+CONFIG_PACKAGE_openssh-sftp-server=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_wget=y
+EOF
+          cd openwrt
+          make defconfig
+
+      - name: 开始编译
+        run: |
+          cd openwrt
+          make -j$(nproc) || make -j1 V=s
+
+      - name: 上传固件 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImmortalWrt-R3P-Micron-NAND
+          path: openwrt/bin/targets/ramips/mt7621/*.bin
+          retention-days: 7
